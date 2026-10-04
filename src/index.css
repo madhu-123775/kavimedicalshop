@@ -1,0 +1,72 @@
+/* =========================================
+   KAVI PHARMACY - GLOBAL FONT
+   ========================================= */
+
+* {
+  box-sizing: border-box;
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  font-family: "Times New Roman", Times, serif !important;
+  font-size: 16px;
+}
+
+body {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif !important;
+  font-size: 16px;
+}
+
+/* Headings */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+/* Buttons */
+button {
+  font-family: "Times New Roman", Times, serif !important;
+  font-size: 16px;
+}
+
+/* Input fields */
+input,
+textarea,
+select {
+  font-family: "Times New Roman", Times, serif !important;
+  font-size: 16px;
+}
+
+/* Tables */
+table,
+thead,
+tbody,
+tr,
+th,
+td {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+/* Links */
+a {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+/* Paragraphs and text */
+p,
+span,
+div,
+label {
+  font-family: "Times New Roman", Times, serif !important;
+}

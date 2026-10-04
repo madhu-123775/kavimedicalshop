@@ -1,0 +1,180 @@
+// ======================================================================
+// aiBillReader.js  -  Bill-ah Claude vision API vachu padikkum (entha layout-um)
+//
+// Setup:
+//   Project root-la `.env` file create pannunga:
+//       VITE_ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+//   Apuram `npm run dev` restart pannunga.
+//
+// Gavanam: Key browser-kulla irukkum. Ungal shop computer-la mattum
+// (localhost) use pannuradhuna ok. Internet-la public-aa deploy pannadheenga.
+// ======================================================================
+
+const API_URL = "https://api.anthropic.com/v1/messages"
+const MODEL = "claude-sonnet-5-5"
+
+export const getApiKey = () => {
+  try {
+    return (
+      import.meta.env?.VITE_ANTHROPIC_API_KEY ||
+      localStorage.getItem("anthropicApiKey") ||
+      ""
+    ).trim()
+  } catch {
+    return ""
+  }
+}
+
+export const hasApiKey = () => !!getApiKey()
+
+const PROMPT = `You are reading a pharmacy purchase bill / invoice (photo, scan or PDF) to add medicines to stock.
+The layout can be ANY layout: columns may be in any order, the bill may be dot-matrix, handwritten marks (ticks, pen) may be on it.
+
+Extract EVERY medicine line item from the item table. Ignore address, GST/DL numbers, totals, tax lines and remarks.
+For each item return:
+- mfr: manufacturer / company code exactly as printed (e.g. "ALK", "MICRO"), "" if none
+- name: product name exactly as printed (include strength / form, e.g. "TAXIM O 200MG TAB")
+- batch: batch number exactly as printed
+- expiry: expiry as "MM/YY" (e.g. printed 3/2028 -> "03/28"), "" if none
+- quantity: number of units bought. If paid+free is printed like "5+1", return the SUM (6). Do NOT use the rate or amount column.
+- mrp: the MRP per unit as a number. This is the column named MRP (NOT Rate / PTR / Amount / Net).
+- packing: pack size / UOM as printed (e.g. "10", "10'S", "60ML", "15'S"), "" if none
+
+Rules:
+- Read each digit carefully. If a character is truly unreadable, return "" (or 0 for numbers) instead of guessing.
+- One object per medicine row, in bill order. Do not merge or skip rows.
+- If the bill prints totals like "Items : 13  Qty : 49", return them in billTotals, else null.
+
+Return ONLY valid JSON, no markdown, no explanation, exactly in this shape:
+{"items":[{"mfr":"","name":"","batch":"","expiry":"","quantity":0,"mrp":0,"packing":""}],"billTotals":{"items":null,"qty":null}}`
+
+const fileToBase64 = (blob) =>
+  new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result).split(",")[1])
+    r.onerror = () => reject(new Error("File read failed"))
+    r.readAsDataURL(blob)
+  })
+
+// Image-a chinna aakki (API limit 5MB) JPEG base64 aa maathum
+const prepImage = async (source) => {
+  const bmp =
+    source instanceof HTMLCanvasElement ? source : await createImageBitmap(source)
+  const MAX = 2400
+  const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height))
+  const canvas = document.createElement("canvas")
+  canvas.width = Math.round(bmp.width * scale)
+  canvas.height = Math.round(bmp.height * scale)
+  const ctx = canvas.getContext("2d")
+  ctx.fillStyle = "#fff"
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL("image/jpeg", 0.92).split(",")[1]
+}
+
+const normExpiry = (v) => {
+  const t = String(v ?? "").trim()
+  if (!t) return ""
+  let m = t.match(/^(\d{1,2})\s*[/.\-]\s*(\d{2,4})$/)
+  if (m) return `${m[1].padStart(2, "0")}/${m[2].slice(-2)}`
+  m = t.match(/^(\d{4})\s*[/.\-]\s*(\d{1,2})$/)
+  if (m) return `${m[2].padStart(2, "0")}/${m[1].slice(-2)}`
+  return t
+}
+
+const num = (v) => {
+  const n = Number(String(v ?? "").replace(/[^\d.]/g, ""))
+  return Number.isFinite(n) ? n : 0
+}
+
+const parseJson = (text) => {
+  const clean = String(text || "").replace(/```json|```/g, "").trim()
+  const a = clean.indexOf("{")
+  const b = clean.lastIndexOf("}")
+  if (a === -1 || b === -1) throw new Error("AI reply-la JSON illa")
+  return JSON.parse(clean.slice(a, b + 1))
+}
+
+/**
+ * source: File / Blob (image or PDF) illana <canvas>
+ * returns { rows, meta }  (Stock.jsx-oda same format)
+ */
+export const readBillWithAI = async (source, onStatus = () => {}) => {
+  const key = getApiKey()
+  if (!key) throw new Error("API key illa")
+
+  onStatus("AI bill-ah padikkudhu...")
+
+  const isPdf =
+    !(source instanceof HTMLCanvasElement) &&
+    (source.type === "application/pdf" || /\.pdf$/i.test(source.name || ""))
+
+  let block
+  if (isPdf) {
+    block = {
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: await fileToBase64(source) },
+    }
+  } else {
+    block = {
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: await prepImage(source) },
+    }
+  }
+
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 8000,
+      messages: [{ role: "user", content: [block, { type: "text", text: PROMPT }] }],
+    }),
+  })
+
+  if (!res.ok) {
+    let detail = ""
+    try {
+      detail = (await res.json())?.error?.message || ""
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`AI error ${res.status}: ${detail}`)
+  }
+
+  const data = await res.json()
+  const text = (data.content || [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("\n")
+
+  const parsed = parseJson(text)
+  const items = Array.isArray(parsed.items) ? parsed.items : []
+
+  const rows = items
+    .map((it) => ({
+      mfr: String(it.mfr ?? "").trim(),
+      name: String(it.name ?? "").replace(/\s+/g, " ").trim(),
+      batch: String(it.batch ?? "").trim(),
+      expiry: normExpiry(it.expiry),
+      quantity: num(it.quantity),
+      rate: num(it.mrp ?? it.rate),
+      packing: String(it.packing ?? "").trim(),
+    }))
+    .filter((r) => r.name)
+
+  const totals = parsed.billTotals || {}
+  const meta = {
+    rows: rows.length,
+    qtySum: rows.reduce((s, r) => s + (Number(r.quantity) || 0), 0),
+  }
+  if (Number(totals.items) > 0) meta.expectedItems = Number(totals.items)
+  if (Number(totals.qty) > 0) meta.expectedQty = Number(totals.qty)
+
+  return { rows, meta }
+}
