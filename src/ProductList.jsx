@@ -1,15 +1,10 @@
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
+import { supabase } from "./supabaseClient";
 
 function ProductList() {
-  const [products, setProducts] = useState(() => {
-    try {
-      const saved = localStorage.getItem("kaviProductList");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [newProduct, setNewProduct] = useState({
     name: "",
@@ -22,15 +17,52 @@ function ProductList() {
   const [searchText, setSearchText] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Save permanently
-  useEffect(() => {
-    localStorage.setItem(
-      "kaviProductList",
-      JSON.stringify(products)
-    );
-  }, [products]);
+  // =====================================================
+  // LOAD PRODUCTS FROM SUPABASE
+  // =====================================================
 
-  // Input change
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  const loadProducts = async () => {
+    try {
+      setLoading(true);
+
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, created_at, product_name, combination")
+        .order("created_at", {
+          ascending: true,
+        });
+
+      if (error) {
+        console.error("Load products error:", error);
+        alert("Unable to load products");
+        return;
+      }
+
+      const formattedProducts = (data || []).map(
+        (product) => ({
+          id: product.id,
+          name: product.product_name || "",
+          combination: product.combination || "",
+        })
+      );
+
+      setProducts(formattedProducts);
+    } catch (error) {
+      console.error(error);
+      alert("Unable to load products");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // =====================================================
+  // INPUT CHANGE
+  // =====================================================
+
   const handleChange = (field, value) => {
     setNewProduct((prev) => ({
       ...prev,
@@ -38,13 +70,18 @@ function ProductList() {
     }));
   };
 
-  // ==============================
-  // PRODUCT SEARCH
-  // ==============================
+  // =====================================================
+  // SEARCH
+  // =====================================================
 
   const filteredProducts = products.filter((product) => {
-    const productName = String(product.name || "").toLowerCase();
-    const search = searchText.trim().toLowerCase();
+    const productName = String(
+      product.name || ""
+    ).toLowerCase();
+
+    const search = searchText
+      .trim()
+      .toLowerCase();
 
     return (
       search.length >= 1 &&
@@ -58,45 +95,88 @@ function ProductList() {
   };
 
   const handleProductSelect = (product) => {
-    // Selected product remains in search box
     setSearchText(product.name || "");
-
-    // Hide dropdown after selecting
     setShowSuggestions(false);
   };
 
-  // ==============================
-  // ADD PRODUCT
-  // ==============================
+  // =====================================================
+  // ADD PRODUCT TO SUPABASE
+  // =====================================================
 
-  const addProduct = () => {
-    if (!newProduct.name.trim()) {
-      alert("Please enter Medicine Name");
+  const addProduct = async () => {
+    const productName = newProduct.name.trim();
+    const combination =
+      newProduct.combination.trim();
+
+    if (!productName) {
+      alert("Please enter Product Name");
       return;
     }
 
-    const product = {
-      name: newProduct.name.trim(),
-      combination: newProduct.combination.trim(),
-      fileName: "",
-    };
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .insert([
+          {
+            product_name: productName,
+            combination: combination,
+          },
+        ])
+        .select(
+          "id, created_at, product_name, combination"
+        )
+        .single();
 
-    setProducts((prev) => [
-      ...prev,
-      product,
-    ]);
+      if (error) {
+        console.error(
+          "Add product error:",
+          error
+        );
 
-    setNewProduct({
-      name: "",
-      combination: "",
-    });
+        alert(
+          "Unable to add product.\n\n" +
+            error.message
+        );
+
+        return;
+      }
+
+      const addedProduct = {
+        id: data.id,
+        name: data.product_name || "",
+        combination:
+          data.combination || "",
+      };
+
+      setProducts((prev) => [
+        ...prev,
+        addedProduct,
+      ]);
+
+      setNewProduct({
+        name: "",
+        combination: "",
+      });
+
+      alert("Product added successfully!");
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Unable to add product.\n\n" +
+          error.message
+      );
+    }
   };
 
-  // ==============================
+  // =====================================================
   // FIND EXCEL COLUMN
-  // ==============================
+  // =====================================================
 
-  const findHeader = (headers, possibleNames) => {
+  const findHeader = (
+    headers,
+    possibleNames
+  ) => {
     for (const name of possibleNames) {
       const found = headers.find(
         (header) =>
@@ -114,12 +194,13 @@ function ProductList() {
     return null;
   };
 
-  // ==============================
+  // =====================================================
   // EXCEL / CSV UPLOAD
-  // ==============================
+  // =====================================================
 
   const handleFileUpload = (event) => {
-    const file = event.target.files?.[0];
+    const file =
+      event.target.files?.[0];
 
     if (!file) return;
 
@@ -127,7 +208,7 @@ function ProductList() {
 
     const reader = new FileReader();
 
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = e.target.result;
 
@@ -171,7 +252,7 @@ function ProductList() {
             )
             .filter(Boolean);
 
-          const hasMedicine =
+          const hasProductName =
             row.includes("medicine name") ||
             row.includes("product name") ||
             row.includes("brand name") ||
@@ -184,7 +265,7 @@ function ProductList() {
             row.includes("generic");
 
           if (
-            hasMedicine ||
+            hasProductName ||
             hasCombination
           ) {
             headerIndex = i;
@@ -192,17 +273,16 @@ function ProductList() {
           }
         }
 
-        const headers = rows[headerIndex];
+        const headers =
+          rows[headerIndex];
 
-        const nameHeader = findHeader(
-          headers,
-          [
+        const nameHeader =
+          findHeader(headers, [
             "Medicine Name",
             "Product Name",
             "Brand Name",
             "Name",
-          ]
-        );
+          ]);
 
         const combinationHeader =
           findHeader(headers, [
@@ -239,28 +319,28 @@ function ProductList() {
             return row[index] ?? "";
           };
 
-          const product = {
-            name: String(
+          const productName =
+            String(
               getValue(nameHeader)
-            ).trim(),
+            ).trim();
 
-            combination: String(
+          const combination =
+            String(
               getValue(
                 combinationHeader
               )
-            ).trim(),
+            ).trim();
 
-            fileName: file.name,
-          };
-
-          // Skip empty rows
           if (
-            product.name ||
-            product.combination
+            productName ||
+            combination
           ) {
-            importedProducts.push(
-              product
-            );
+            importedProducts.push({
+              product_name:
+                productName,
+              combination:
+                combination,
+            });
           }
         }
 
@@ -270,22 +350,60 @@ function ProductList() {
           alert(
             "No product data found.\n\nPlease check your Excel column names."
           );
+
           return;
         }
 
+        // Insert imported products into Supabase
+        const { data: insertedData, error } =
+          await supabase
+            .from("products")
+            .insert(importedProducts)
+            .select(
+              "id, created_at, product_name, combination"
+            );
+
+        if (error) {
+          console.error(
+            "Excel import error:",
+            error
+          );
+
+          alert(
+            "Unable to import products.\n\n" +
+              error.message
+          );
+
+          return;
+        }
+
+        const formattedProducts =
+          (insertedData || []).map(
+            (product) => ({
+              id: product.id,
+              name:
+                product.product_name ||
+                "",
+              combination:
+                product.combination ||
+                "",
+            })
+          );
+
         setProducts((prev) => [
           ...prev,
-          ...importedProducts,
+          ...formattedProducts,
         ]);
 
         alert(
-          `${importedProducts.length} product(s) imported successfully!`
+          `${formattedProducts.length} product(s) imported successfully!`
         );
       } catch (error) {
         console.error(error);
 
         alert(
-          "Unable to read the Excel/CSV file."
+          "Unable to read the Excel/CSV file.\n\n" +
+            error.message
         );
       }
     };
@@ -296,50 +414,128 @@ function ProductList() {
     event.target.value = "";
   };
 
-  // ==============================
+  // =====================================================
   // EDIT PRODUCT
-  // ==============================
+  // =====================================================
 
-  const editProduct = (
-    index,
+  const editProduct = async (
+    id,
     field,
     value
   ) => {
-    setProducts((prev) => {
-      const updated = [...prev];
+    // Update screen immediately
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id === id
+          ? {
+              ...product,
+              [field]: value,
+            }
+          : product
+      )
+    );
 
-      updated[index] = {
-        ...updated[index],
-        [field]: value,
-      };
+    try {
+      const updateData =
+        field === "name"
+          ? {
+              product_name: value,
+            }
+          : {
+              combination: value,
+            };
 
-      return updated;
-    });
+      const { error } = await supabase
+        .from("products")
+        .update(updateData)
+        .eq("id", id);
+
+      if (error) {
+        console.error(
+          "Update product error:",
+          error
+        );
+
+        alert(
+          "Unable to update product.\n\n" +
+            error.message
+        );
+
+        // Reload original data
+        loadProducts();
+      }
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Unable to update product.\n\n" +
+          error.message
+      );
+
+      loadProducts();
+    }
   };
 
-  // ==============================
+  // =====================================================
   // DELETE PRODUCT
-  // ==============================
+  // =====================================================
 
-  const deleteProduct = (index) => {
-    const product = products[index];
+  const deleteProduct = async (id) => {
+    const product = products.find(
+      (item) => item.id === id
+    );
 
     const confirmDelete =
       window.confirm(
         `Delete "${
-          product.name ||
+          product?.name ||
           "this product"
         }"?`
       );
 
     if (!confirmDelete) return;
 
-    setProducts((prev) =>
-      prev.filter(
-        (_, i) => i !== index
-      )
-    );
+    try {
+      const { error } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", id);
+
+      if (error) {
+        console.error(
+          "Delete product error:",
+          error
+        );
+
+        alert(
+          "Unable to delete product.\n\n" +
+            error.message
+        );
+
+        return;
+      }
+
+      setProducts((prev) =>
+        prev.filter(
+          (product) =>
+            product.id !== id
+        )
+      );
+
+      alert("Product deleted successfully!");
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Unable to delete product.\n\n" +
+          error.message
+      );
+    }
   };
+
+  // =====================================================
+  // UI
+  // =====================================================
 
   return (
     <div
@@ -403,9 +599,7 @@ function ProductList() {
         ← Back to Dashboard
       </button>
 
-      {/* ==============================
-          SEARCH PRODUCT
-      ============================== */}
+      {/* SEARCH PRODUCT */}
 
       <div
         style={{
@@ -434,7 +628,7 @@ function ProductList() {
         >
           <input
             type="text"
-            placeholder="Search"
+            placeholder="Search product..."
             value={searchText}
             onChange={(e) =>
               handleSearchChange(
@@ -448,30 +642,23 @@ function ProductList() {
                 setShowSuggestions(true);
               }
             }}
-            style={{
-              width: "100%",
-              padding: "13px",
-              border:
-                "1px solid #cbd5e1",
-              borderRadius: "8px",
-              fontSize: "16px",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
+            style={inputStyle}
           />
 
           {/* DROPDOWN */}
 
           {showSuggestions &&
             searchText.trim() !== "" &&
-            filteredProducts.length > 0 && (
+            filteredProducts.length >
+              0 && (
               <div
                 style={{
                   position: "absolute",
                   top: "100%",
                   left: 0,
                   right: 0,
-                  background: "white",
+                  background:
+                    "white",
                   border:
                     "1px solid #d1d5db",
                   borderRadius: "8px",
@@ -484,12 +671,9 @@ function ProductList() {
                 }}
               >
                 {filteredProducts.map(
-                  (product, index) => (
+                  (product) => (
                     <div
-                      key={
-                        product.id ||
-                        index
-                      }
+                      key={product.id}
                       onClick={() =>
                         handleProductSelect(
                           product
@@ -504,8 +688,6 @@ function ProductList() {
                           "pointer",
                         fontSize: "16px",
                         color: "#111827",
-                        background:
-                          "white",
                       }}
                       onMouseEnter={(
                         e
@@ -576,7 +758,7 @@ function ProductList() {
             )}
         </div>
 
-        {/* CLEAR SEARCH */}
+        {/* CLEAR */}
 
         {searchText && (
           <button
@@ -589,8 +771,7 @@ function ProductList() {
               border: "none",
               background: "#f1f5f9",
               color: "#374151",
-              padding:
-                "7px 14px",
+              padding: "7px 14px",
               borderRadius: "6px",
               cursor: "pointer",
             }}
@@ -600,9 +781,7 @@ function ProductList() {
         )}
       </div>
 
-      {/* ==============================
-          ADD PRODUCT
-      ============================== */}
+      {/* ADD PRODUCT */}
 
       <div
         style={{
@@ -632,7 +811,7 @@ function ProductList() {
           }}
         >
           <input
-            placeholder="Medicine Name"
+            placeholder="Product Name"
             value={newProduct.name}
             onChange={(e) =>
               handleChange(
@@ -674,6 +853,7 @@ function ProductList() {
 
         <button
           onClick={addProduct}
+          disabled={loading}
           style={{
             marginTop: "15px",
             background: "#059669",
@@ -689,9 +869,7 @@ function ProductList() {
         </button>
       </div>
 
-      {/* ==============================
-          EXCEL UPLOAD
-      ============================== */}
+      {/* EXCEL UPLOAD */}
 
       <div
         style={{
@@ -718,8 +896,9 @@ function ProductList() {
             fontSize: "14px",
           }}
         >
-          Upload your product Excel
-          or CSV file.
+          Upload your Product Name
+          and Combination Excel or CSV
+          file.
         </p>
 
         <input
@@ -779,15 +958,14 @@ function ProductList() {
           }}
         >
           Supported columns:
-          Medicine Name, Product
-          Name, Brand Name,
-          Combination, Generic Name
+          <br />
+          <strong>Product Name</strong>
+          <br />
+          <strong>Combination</strong>
         </div>
       </div>
 
-      {/* ==============================
-          SAVE INFORMATION
-      ============================== */}
+      {/* DATABASE STATUS */}
 
       <div
         style={{
@@ -799,20 +977,17 @@ function ProductList() {
           fontSize: "14px",
         }}
       >
-        💾 Product data is
-        automatically saved in this
-        browser.
+        ☁️ Product data is saved in
+        Supabase database.
 
         <strong>
           {" "}
           {products.length} products
-          saved.
+          loaded.
         </strong>
       </div>
 
-      {/* ==============================
-          PRODUCT TABLE
-      ============================== */}
+      {/* SAVED PRODUCTS */}
 
       <div
         style={{
@@ -833,7 +1008,17 @@ function ProductList() {
           📋 Saved Products
         </h2>
 
-        {products.length === 0 ? (
+        {loading ? (
+          <div
+            style={{
+              padding: "30px",
+              textAlign: "center",
+              color: "#6b7280",
+            }}
+          >
+            Loading products...
+          </div>
+        ) : products.length === 0 ? (
           <div
             style={{
               padding: "30px",
@@ -864,7 +1049,7 @@ function ProductList() {
                 </th>
 
                 <th style={thStyle}>
-                  Medicine Name
+                  Product Name
                 </th>
 
                 <th style={thStyle}>
@@ -880,7 +1065,7 @@ function ProductList() {
             <tbody>
               {products.map(
                 (product, index) => (
-                  <tr key={index}>
+                  <tr key={product.id}>
                     <td
                       style={{
                         ...tdStyle,
@@ -906,7 +1091,7 @@ function ProductList() {
                         }
                         onChange={(e) =>
                           editProduct(
-                            index,
+                            product.id,
                             "name",
                             e.target.value
                           )
@@ -927,7 +1112,7 @@ function ProductList() {
                         }
                         onChange={(e) =>
                           editProduct(
-                            index,
+                            product.id,
                             "combination",
                             e.target.value
                           )
@@ -936,12 +1121,16 @@ function ProductList() {
                     </td>
 
                     <td
-                      style={tdStyle}
+                      style={{
+                        ...tdStyle,
+                        textAlign:
+                          "center",
+                      }}
                     >
                       <button
                         onClick={() =>
                           deleteProduct(
-                            index
+                            product.id
                           )
                         }
                         style={{
@@ -975,9 +1164,9 @@ function ProductList() {
   );
 }
 
-// ==============================
+// =====================================================
 // STYLES
-// ==============================
+// =====================================================
 
 const inputStyle = {
   width: "100%",
