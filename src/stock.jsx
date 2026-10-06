@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { supabase } from "./supabaseClient"
+import { supabase } from "./supabaseclient"
 
 const EMPTY_ROW = {
   mfr: "",
