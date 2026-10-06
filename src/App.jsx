@@ -1,6 +1,6 @@
 import NewBill from "./NewBill"
 import Stock from "./stock"
-import ProductList from "./ProductList"
+import ProductList from "./ProductList";
 import Register from "./Register"
 import SalesReport from "./SalesReport"
 import Doctors from "./Doctors"
