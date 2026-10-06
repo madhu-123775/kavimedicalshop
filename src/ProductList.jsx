@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
-import { supabase } from "./supabaseClient";
+import { supabase } from "./supabaseclient";
 
 function ProductList() {
   const [products, setProducts] = useState([]);
